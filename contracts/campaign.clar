@@ -5,6 +5,8 @@
 (define-constant err-owner-only (err u100))
 (define-constant err-invalid-params (err u101))
 (define-constant err-campaign-ended (err u102))
+(define-constant err-unauthorized (err u108))
+(define-constant err-insufficient-funds (err u109))
 
 ;; Data vars
 (define-map campaigns
@@ -12,17 +14,19 @@
   {
     creator: principal,
     title: (string-utf8 100),
+    description: (string-utf8 500),
     target: uint,
     deadline: uint,
     raised: uint,
-    active: bool
+    active: bool,
+    funds-withdrawn: bool
   }
 )
 
 (define-data-var campaign-nonce uint u0)
 
 ;; Public functions
-(define-public (create-campaign (title (string-utf8 100)) (target uint) (deadline uint))
+(define-public (create-campaign (title (string-utf8 100)) (description (string-utf8 500)) (target uint) (deadline uint))
   (let
     (
       (campaign-id (var-get campaign-nonce))
@@ -35,10 +39,12 @@
       {
         creator: tx-sender,
         title: title,
+        description: description,
         target: target,
         deadline: deadline,
         raised: u0,
-        active: true
+        active: true,
+        funds-withdrawn: false
       }
     )
     
@@ -66,7 +72,40 @@
   )
 )
 
+(define-public (withdraw-funds (campaign-id uint))
+  (let
+    (
+      (campaign (unwrap! (get-campaign campaign-id) (err u105)))
+    )
+    (asserts! (is-eq (get creator campaign) tx-sender) err-unauthorized)
+    (asserts! (not (get funds-withdrawn campaign)) err-unauthorized)
+    (asserts! (>= block-height (get deadline campaign)) err-invalid-params)
+    
+    (try! (as-contract (stx-transfer? (get raised campaign) tx-sender (get creator campaign))))
+    
+    (map-set campaigns
+      { campaign-id: campaign-id }
+      (merge campaign { funds-withdrawn: true, active: false })
+    )
+    (ok true)
+  )
+)
+
 ;; Read only functions
 (define-read-only (get-campaign (campaign-id uint))
   (ok (map-get? campaigns { campaign-id: campaign-id }))
+)
+
+(define-read-only (get-campaign-status (campaign-id uint))
+  (let
+    (
+      (campaign (unwrap! (map-get? campaigns { campaign-id: campaign-id }) (err u105)))
+    )
+    (ok {
+      active: (get active campaign),
+      target-reached: (>= (get raised campaign) (get target campaign)),
+      deadline-passed: (>= block-height (get deadline campaign)),
+      funds-withdrawn: (get funds-withdrawn campaign)
+    })
+  )
 )
