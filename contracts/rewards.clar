@@ -11,7 +11,20 @@
 ;; Data vars
 (define-map donor-points
   { donor: principal }
-  { points: uint }
+  { 
+    points: uint,
+    current-badge: (optional uint),
+    total-donated: uint
+  }
+)
+
+(define-map badge-metadata
+  { badge-id: uint }
+  {
+    badge-type: uint,
+    issued-at: uint,
+    donor: principal
+  }
 )
 
 (define-data-var badge-nonce uint u0)
@@ -20,13 +33,19 @@
 (define-public (award-points (donor principal) (amount uint))
   (let
     (
-      (current-points (default-to u0 (get points (map-get? donor-points { donor: donor }))))
-      (new-points (+ current-points amount))
+      (current-data (default-to { points: u0, current-badge: none, total-donated: u0 }
+        (map-get? donor-points { donor: donor })))
+      (new-points (+ (get points current-data) amount))
+      (new-total (+ (get total-donated current-data) amount))
     )
     
     (map-set donor-points
       { donor: donor }
-      { points: new-points }
+      { 
+        points: new-points,
+        current-badge: (get current-badge current-data),
+        total-donated: new-total
+      }
     )
     
     (match (check-badge-eligibility new-points)
@@ -56,6 +75,22 @@
       (badge-id (var-get badge-nonce))
     )
     (try! (nft-mint? donor-badge badge-id recipient))
+    
+    (map-set badge-metadata
+      { badge-id: badge-id }
+      {
+        badge-type: badge-type,
+        issued-at: block-height,
+        donor: recipient
+      }
+    )
+    
+    (map-set donor-points
+      { donor: recipient }
+      (merge (unwrap-panic (map-get? donor-points { donor: recipient }))
+        { current-badge: (some badge-id) })
+    )
+    
     (var-set badge-nonce (+ badge-id u1))
     (ok true)
   )
@@ -63,5 +98,9 @@
 
 ;; Read only functions
 (define-read-only (get-points (donor principal))
-  (ok (default-to u0 (get points (map-get? donor-points { donor: donor }))))
+  (ok (map-get? donor-points { donor: donor }))
+)
+
+(define-read-only (get-badge-info (badge-id uint))
+  (ok (map-get? badge-metadata { badge-id: badge-id }))
 )
